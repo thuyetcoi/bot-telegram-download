@@ -3,6 +3,8 @@ import re
 import json
 import logging
 import requests
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
@@ -14,6 +16,22 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 headers_global = {
     'user-agent': 'Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Mobile Safari/537.36'
 }
+
+# --- CẤU HÌNH ĐỂ BYPASS LỖI WEB SERVICE CỦA RENDER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
+
+def run_health_check_server():
+    # Render tự động cấp một cổng PORT, nếu không có thì mặc định dùng 10000
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"📡 Cổng cứu trợ Render đang mở tại PORT: {port}")
+    server.serve_forever()
+# ----------------------------------------------------
 
 def extract_douyin_video(clean_url):
     out_filename = "douyin_final.mp4"
@@ -103,6 +121,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 def main():
+    # Chạy cổng web cứu trợ Render ở luồng riêng để tránh crash
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
     print("🚀 Bot Downloader Online đang chạy...")
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

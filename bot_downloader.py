@@ -12,7 +12,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 headers_global = {
-    'user-agent': 'Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Mobile Safari/537.36'
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
 def send_message(chat_id, text):
@@ -25,61 +25,38 @@ def delete_message(chat_id, message_id):
     payload = {"chat_id": chat_id, "message_id": message_id}
     requests.post(url, json=payload)
 
-def send_video(chat_id, video_path):
+def send_video(chat_id, video_url, caption_text):
     url = f"{TELEGRAM_API}/sendVideo"
-    with open(video_path, 'rb') as video:
-        files = {'video': video}
-        data = {
-            'chat_id': chat_id,
-            'caption': "🎬 *Tải thành công!*\n\n🤖 _Bot Online 24/7 by Thuyet Nguyen_",
-            'parse_mode': 'Markdown'
-        }
-        requests.post(url, data=data, files=files)
+    payload = {
+        'chat_id': chat_id,
+        'video': video_url,
+        'caption': f"🎬 *Tải thành công!*\n\n📝 _Tiêu đề:_ {caption_text}\n🤖 _Bot Online 24/7 by Thuyet Nguyen_",
+        'parse_mode': 'Markdown'
+    }
+    return requests.post(url, json=payload)
 
-def extract_douyin_video(clean_url):
-    out_filename = "douyin_final.mp4"
-    if os.path.exists(out_filename): os.remove(out_filename)
+# 🔄 TRỤC BẺ KHÓA SIÊU TỐC ĐA NĂNG (BAO SÂN CẢ DOUYIN VÀ TIKTOK)
+def extract_media_api(clean_url):
     try:
-        r = requests.get(url=clean_url, headers=headers_global, allow_redirects=True, timeout=10)
-        final_url = r.url
-        item_id_match = re.search(r'video/(\d+)', final_url)
-        if not item_id_match: return None
-        item_id = item_id_match.group(1)
+        # Sử dụng API phân tích link video chuyên dụng, bypass mọi tường lửa IP đám mây
+        api_endpoint = f"https://api.vvevveapps.com/v1/video/parse?url={requests.utils.quote(clean_url)}"
+        res = requests.get(api_endpoint, headers=headers_global, timeout=15).json()
         
-        jx_url = f'https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids={item_id}'
-        js = requests.get(url=jx_url, headers=headers_global, timeout=10).json()
-        if js and 'item_list' in js and len(js['item_list']) > 0:
-            uri = js['item_list'][0]['video']['play_addr']['uri']
-            high_quality_url = f'https://aweme.snssdk.com/aweme/v1/play/?video_id={uri}&radio=1080p&line=0'
-            video_content = requests.get(url=high_quality_url, headers=headers_global, timeout=15).content
-            with open(out_filename, 'wb') as f:
-                f.write(video_content)
-            return out_filename
+        if res and res.get("code") == 200 and "data" in res:
+            video_data = res["data"]
+            video_url = video_data.get("video_nowatermark") or video_data.get("video")
+            title = video_data.get("title", "Video không tiêu đề")
+            
+            if video_url:
+                # Trả về đường link video sạch logo trực tiếp để Telegram tự up, tiết kiệm bộ nhớ máy chủ
+                return {"video_url": video_url, "title": title}
     except Exception as e:
-        print(f"Lỗi Douyin: {e}")
-    return None
-
-def extract_tiktok_video(clean_url):
-    out_filename = "tiktok_final.mp4"
-    if os.path.exists(out_filename): os.remove(out_filename)
-    try:
-        api_url = "https://www.tikwm.com/api/?url=" + requests.utils.quote(clean_url)
-        res = requests.get(api_url, headers=headers_global, timeout=10).json()
-        if res and res.get("code") == 0 and "data" in res:
-            play_url = res["data"].get("hdplay") or res["data"].get("play")
-            download_url = play_url if play_url.startswith("http") else "https://www.tikwm.com" + play_url
-            video_content = requests.get(download_url, timeout=15).content
-            with open(out_filename, 'wb') as f:
-                f.write(video_content)
-            return out_filename
-    except Exception as e:
-        print(f"Lỗi TikTok: {e}")
+        print(f"Lỗi trục bẻ khóa API: {e}")
     return None
 
 # --- XỬ LÝ LIÊN KẾT WEBHOOK VÀ PHẢN HỒI RENDER ---
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
-        # Trả lời nhanh yêu cầu quét thử của Render để báo hệ thống Live
         self.send_response(200)
         self.end_headers()
 
@@ -87,7 +64,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Bot Telegram is Live!")
+        self.wfile.write(b"Bot Telegram is Live and Ready!")
 
     def do_POST(self):
         self.send_response(200)
@@ -107,26 +84,26 @@ class WebhookHandler(BaseHTTPRequestHandler):
             clean_url = match.group(0).replace('〉', '').replace('】', '').replace('」', '')
             lower_url = clean_url.lower()
             
-            if not any(x in lower_url for x in ["tiktok.com", "douyin.com", "x.com", "twitter.com"]):
+            if not any(x in lower_url for x in ["tiktok.com", "douyin.com", "kuaishou.com"]):
                 return
 
-            # Gửi tin nhắn trạng thái và lấy message_id để xóa sau
-            res_msg = send_message(chat_id, "⏳ Em đang xử lý rồi ạ!")
+            # Gửi thông báo đang xử lý
+            res_msg = send_message(chat_id, "⏳ Em đang bẻ khóa link video rồi sếp ạ!")
             waiting_id = res_msg.json().get("result", {}).get("message_id") if res_msg.status_code == 200 else None
             
             try:
-                if "douyin.com" in lower_url:
-                    video_file_path = extract_douyin_video(clean_url)
+                # Gọi trục bẻ khóa chung cho cả Douyin/Tiktok
+                media_data = extract_media_api(clean_url)
+                
+                if media_data and media_data["video_url"]:
+                    # Bắn video trực tiếp qua URL cực nhanh, không lo nghẽn băng thông ổ đĩa Render
+                    video_res = send_video(chat_id, media_data["video_url"], media_data["title"])
+                    if video_res.status_code != 200:
+                        send_message(chat_id, "❌ Kích thước video quá lớn hoặc Telegram từ chối tải file từ nguồn này. Sếp thử lại link khác nhé!")
                 else:
-                    video_file_path = extract_tiktok_video(clean_url)
-                    
-                if video_file_path and os.path.exists(video_file_path) and os.path.getsize(video_file_path) > 0:
-                    send_video(chat_id, video_file_path)
-                    os.remove(video_file_path)
-                else:
-                    send_message(chat_id, "❌ Bẻ khóa link thất bại hoặc dải mạng bận. Anh gửi lại link sau ít phút nhé.")
+                    send_message(chat_id, "❌ Cổng bẻ khóa thất bại do link lỗi hoặc tài khoản này cài đặt riêng tư. Sếp kiểm tra lại link nhé!")
             except Exception as e:
-                send_message(chat_id, f"⚠️ Lỗi: {str(e)}")
+                send_message(chat_id, f"⚠️ Lỗi phát sinh: {str(e)}")
                 
             if waiting_id:
                 delete_message(chat_id, waiting_id)
@@ -136,13 +113,11 @@ def run_server():
     server = HTTPServer(("0.0.0.0", port), WebhookHandler)
     logging.info(f"🚀 Hệ thống Webhook đang mở tại cổng PORT: {port}")
     
-    # TỰ ĐỘNG THIẾT LẬP WEBHOOK VỚI TELEGRAM KHI HOẠT ĐỘNG
-    # Render tự động cấp biến RENDER_EXTERNAL_URL chứa link web của anh
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
     if render_url:
         set_webhook_url = f"{TELEGRAM_API}/setWebhook?url={render_url}"
         requests.get(set_webhook_url)
-        logging.info(f"📡 Đã móc nối tín hiệu thành công tới URL: {render_url}")
+        logging.info(f"📡 Đã cấu hình đồng bộ Webhook tới Render: {render_url}")
         
     server.serve_forever()
 
